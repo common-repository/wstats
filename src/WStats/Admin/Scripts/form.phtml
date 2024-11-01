@@ -1,0 +1,302 @@
+
+<h1>WStats</h1>
+<hr>
+<div class="wrap">
+	<p>Find out you score based on you posts and their comments.</p>
+</div>
+
+<!-- set the current user to be available through the whole script -->
+<?php $user = wp_get_current_user(); ?>
+
+<!-- the admin menu is only available for users with admin-rights (level == 10) -->
+<div class="adminMenu">
+<?php
+	// only admin-level user should be able to set commentsNeededForMaxScore
+	if($user->user_level == 10){
+		echo('<h2>Admin Options</h2><hr>
+			<span>Count of Comments per Post for 5 Stars rating</span>
+			<br>
+			<form action= "">
+				<input type="hidden" name="page" value="wstats">
+				<input type="number" name="quantity" value="5" min="5" max="1000">
+				<input type="submit" value="Apply">
+			</form>
+			<br>');
+	}
+?>
+</div>
+
+<h2>Top 5 Posts based on their rating</h2><hr>
+
+<script src="<?php echo(plugins_url('js/Chart.js', __FILE__ )) ?>"></script>
+
+<canvas id="detailChart" width="512" height="384"></canvas>
+
+<script>
+	//Get the context of the canvas element we want to select
+	var ctx = document.getElementById("detailChart").getContext("2d");
+
+	var data = {
+		labels: ["", "", "", "", ""],
+		datasets: [{
+			fillColor: "rgba(255,50,0,0.5)",
+			strokeColor: "rgba(220,0,0,1)",
+			pointColor: "rgba(151,107,105,1)",
+			pointStrokeColor: "#fff",
+			data: []
+		}]
+	}
+
+	for(var i = 0; i < 5; i++) {
+		data.datasets[0].data[i] = 0;
+	}
+</script>
+
+
+<?php
+	global $wpdb;
+	$table_name = WStats\Admin\Scripts\HelperFuncs::$table_name;
+	$col_name = WStats\Admin\Scripts\HelperFuncs::$col_name;
+	$def_val = WStats\Admin\Scripts\HelperFuncs::$default_cnfms;
+
+	// create table if doesnt exist and insert column commentsNeededForMaxScore
+	if($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) 
+	{
+		//echo("CREATE TABLE");
+		$sql = "CREATE TABLE $table_name (
+			$col_name INT
+		);";
+
+		require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+		dbDelta( $sql );
+
+		$wpdb->insert( $table_name, array( $col_name => $def_val ), array( '%d' ) );
+	}
+
+	Setup_Score_Scale($user);
+
+	// get cnfms newest value from database
+	$commentsNeededForMaxScore = WStats\Admin\Scripts\HelperFuncs::$default_cnfms;	// default initialization
+	$results = $wpdb->get_results( "SELECT " . $col_name . " FROM " . $table_name );
+	foreach ( $results as $cnfms ) 
+	{
+		$commentsNeededForMaxScore = $cnfms->commentsNeededForMaxScore;
+		//echo "cnfms: " . $cnfms->commentsNeededForMaxScore;
+	}
+
+	if(count_user_posts($user->ID) == 0){
+		echo("You didn't post anything yet. To be shown your statistics here, you will have to be more active on the blog!");
+	}
+	else{
+		//echo("Your post count: ".count_user_posts($user->ID));
+		//echo("<br>");
+		//echo("<br>");
+		// get all the posts of the current user
+		$posts = get_posts('author='.$user->ID);
+
+		// count the score for each post of the current user and save it in an array
+		$user_scores = array();
+		$maxScore = 0;
+		foreach ($posts as $key => $value) {
+			$postTitle = $value->post_title;
+			//echo($value->post_title);
+			//echo("<br>");
+
+			$comments = get_comment_count($post_id = $value->ID);
+
+
+			//echo("Post comments: ".$comments['total_comments']);
+
+			//echo("</br>");
+			$score = min($comments['total_comments']/$commentsNeededForMaxScore,1);
+			$score = $score * 5;
+
+			//echo("<br>");
+			//echo("Post rating: ".$score);
+
+			//echo("</br>");
+			//echo("</br>");
+
+			if($score > $maxScore)
+				$maxScore = $score;
+
+			$user_scores[$postTitle] = $score;
+		}
+
+		arsort($user_scores);
+
+		$i = 0;
+		foreach($user_scores as $key => $value)
+		{
+			?>
+				<script>
+					data.labels["<?php echo($i); ?>"] = "<?php echo(substr($key, 0, 12)); ?>";
+					data.datasets[0].data["<?php echo($i); ?>"] = "<?php echo($value); ?>";
+				</script>
+			<?php
+
+			$i++;
+			if($i == 5)
+				break;
+		}
+
+		// count the total score for the current user
+		$myScore = 0;
+		foreach($user_scores as $key => $value)
+		{
+			$myScore += $value;
+		}
+	}
+
+	$allUsers = get_users();
+
+	$topUsers = array();
+	foreach($allUsers as $u)
+	{
+		$topUsers[$u->user_login] = WStats\Admin\Scripts\HelperFuncs::get_user_score($u);
+	}
+	arsort($topUsers);
+	?>
+
+		<script>
+			// options for radar graph visualisation
+			var options = {
+				//Boolean - If we show the scale above the chart data			
+				scaleOverlay : false,
+				
+				//Boolean - If we want to override with a hard coded scale
+				scaleOverride : true,
+				
+				//** Required if scaleOverride is true **
+				//Number - The number of steps in a hard coded scale
+				scaleSteps : <?php echo($maxScore); ?>,
+				//Number - The value jump in the hard coded scale
+				scaleStepWidth : 1,
+				//Number - The scale starting value
+				scaleStartValue : 0,
+
+				//String - Colour of the scale line	
+				scaleLineColor : "rgba(0,0,0,.1)",
+				
+				//Number - Pixel width of the scale line	
+				scaleLineWidth : 1,
+
+				//Boolean - Whether to show labels on the scale	
+				scaleShowLabels : true,
+				
+				//Interpolated JS string - can access value
+				scaleLabel : "<%=value%>",
+				
+				//String - Scale label font declaration for the scale label
+				scaleFontFamily : "'Arial'",
+				
+				//Number - Scale label font size in pixels	
+				scaleFontSize : 12,
+				
+				//String - Scale label font weight style	
+				scaleFontStyle : "normal",
+				
+				//String - Scale label font colour	
+				scaleFontColor : "#666",	
+				
+				///Boolean - Whether grid lines are shown across the chart
+				scaleShowGridLines : true,
+				
+				//String - Colour of the grid lines
+				scaleGridLineColor : "rgba(0,0,0,.05)",
+				
+				//Number - Width of the grid lines
+				scaleGridLineWidth : 1,	
+
+				//Boolean - If there is a stroke on each bar	
+				barShowStroke : true,
+				
+				//Number - Pixel width of the bar stroke	
+				barStrokeWidth : 2,
+				
+				//Number - Spacing between each of the X value sets
+				barValueSpacing : 5,
+				
+				//Number - Spacing between data sets within X values
+				barDatasetSpacing : 1,
+				
+				//Boolean - Whether to animate the chart
+				animation : true,
+
+				//Number - Number of animation steps
+				animationSteps : 60,
+				
+				//String - Animation easing effect
+				animationEasing : "easeOutQuart",
+
+				//Function - Fires when the animation is complete
+				onAnimationComplete : null
+			}
+			
+			// draw radar graph
+			var chartRadar = new Chart(ctx).Bar(data, options);
+		</script>
+
+
+		<h2>User Rankings</h2><hr>
+		<table style="background-color:#444; color:white; width:30% ">
+			<tr>
+				<th>Rank</th><th>Name</th><th><?php echo("<img style='background:transparent; border:0px; width:24px; height:24px;' src='".plugin_dir_url( __FILE__ ) . "../../../../img/star.png'"); ?></th>
+			</tr>
+
+	<?php
+	$currIdx = 0;
+	foreach($topUsers as $key => $value)
+	{
+		?>
+		<tr style="text-align:center;<?php if($key == wp_get_current_user()->user_login){echo("background-color:#ff3812;");} ?>">
+			<td><?php echo($currIdx+1); ?></td>
+			<td><?php echo($key); ?></td>
+			<td><?php echo(floor($value)); ?></td>
+		</tr>
+		<?php
+		$currIdx++;
+	}
+?>
+	</table>
+
+
+<?php
+	function Setup_Score_Scale($user) {
+
+		if(isset($_GET['quantity']))
+		{
+			$currValue = $_GET['quantity'];
+
+			global $wpdb;
+			$table_name = WStats\Admin\Scripts\HelperFuncs::$table_name;
+			$col_name = WStats\Admin\Scripts\HelperFuncs::$col_name;
+
+			// get current value from database
+			$beforeValue = WStats\Admin\Scripts\HelperFuncs::$default_cnfms;	// default init value
+			$results = $wpdb->get_results( "SELECT " . $col_name . " FROM " . $table_name );
+			foreach ( $results as $cnfms ) 
+			{
+				$beforeValue = $cnfms->commentsNeededForMaxScore;
+			}
+
+			$wpdb->update( $table_name, array( $col_name => $currValue ), array($col_name => $beforeValue), array( '%d' ) );
+
+			//echo($_GET['quantity']);
+			//echo("<br>");
+		}
+	}
+?>
+
+<style>
+	table {
+    border-collapse: collapse;
+	}
+	table td, table th {
+	    border: 1px solid white;
+	}
+	table tr td{
+	    border-bottom: 0;
+	    border-top: 0;
+	}
+</style>
